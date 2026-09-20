@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>公众号三步写作 · 网页 v2</title>
+  <style>
+    :root { color: #1d2433; background: #f4f6f8; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    body { margin: 0; }
+    main { width: min(920px, calc(100% - 32px)); margin: 40px auto 72px; }
+    h1 { margin: 0; font-size: 28px; }
+    .intro { color: #697386; margin: 10px 0 28px; }
+    .card { background: #fff; border: 1px solid #e5e9ef; border-radius: 14px; padding: 24px; box-shadow: 0 8px 26px rgba(23, 35, 58, .05); }
+    label { display: block; margin: 18px 0 8px; font-weight: 650; }
+    input, textarea, select { box-sizing: border-box; width: 100%; border: 1px solid #ccd4df; border-radius: 9px; padding: 12px; font: inherit; color: inherit; background: #fff; }
+    textarea { min-height: 260px; line-height: 1.7; resize: vertical; }
+    select { width: 180px; }
+    .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .settings label { margin-bottom: 8px; }
+    .settings select { width: 100%; }
+    .hint { color: #7b8798; font-size: 13px; margin: 7px 0 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 24px; }
+    .report { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 500px; overflow: auto; font: inherit; line-height: 1.7; }
+    #jobs { display: grid; gap: 8px; margin: 12px 0; }
+    #jobs button { text-align: left; background: #f4f6f8; font-weight: 400; }
+    #jobs button[aria-current="true"] { outline: 2px solid #1565d8; }
+    button { border: 0; border-radius: 9px; padding: 12px 18px; font: inherit; font-weight: 650; cursor: pointer; }
+    #submit { color: #fff; background: #1565d8; }
+    #submit:disabled { cursor: wait; opacity: .65; }
+    #copy { background: #e8eef9; color: #164b9e; }
+    #status { color: #536174; font-size: 14px; }
+    #result { display: none; margin-top: 24px; }
+    #result textarea { min-height: 360px; background: #fbfcfe; }
+    #selected-title { min-height: auto; margin: 12px 0; }
+    #title-list { display: grid; gap: 8px; margin: 14px 0; }
+    .title-option { width: 100%; text-align: left; background: #fbfcfe; border: 1px solid #d8e0eb; color: #243247; font-weight: 500; }
+    .title-option:hover, .title-option[aria-pressed="true"] { background: #e8f0fe; border-color: #1565d8; color: #124eab; }
+    .path { margin: 10px 0 0; color: #5d6c80; font-size: 13px; overflow-wrap: anywhere; }
+    #console { white-space: pre-wrap; background: #172033; color: #dbe7ff; border-radius: 9px; padding: 14px; max-height: 240px; overflow: auto; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    #image-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; margin-top:16px; }
+    .image-card { border:1px solid #d8e0eb; border-radius:9px; padding:12px; overflow-wrap:anywhere; }
+    .image-card img { width:100%; height:170px; object-fit:contain; background:#f4f6f8; }
+    .image-card input { width:auto; margin-right:8px; }
+    .image-card p { font-size:13px; line-height:1.6; }
+    @media (max-width: 620px) { .settings { grid-template-columns: 1fr; gap: 0; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>公众号三步写作 · v2</h1>
+    <p class="intro">三份完整核心提示词，一次跑完。手动选赛道，沿用对应标题库和人设；任务提交后可关闭网页。</p>
+    <form id="writer-form" class="card">
+      <label for="topic">仿写主题</label>
+      <input id="topic" name="topic" placeholder="例如：体制内最怕的，不是忙，而是这三种假努力" required>
+
+      <label for="brief">写作要求与立场</label>
+      <textarea id="brief" name="brief" style="min-height:120px" placeholder="例如：必须写华为 Mate 90；立场是价格下降值得肯定，但不要吹成完美产品；用第一人称测评口吻；不要转成苹果或泛泛的手机选购文章。"></textarea>
+      <p class="hint">这里写清“必须写什么、怎样写、你的态度、必须包含或避开的内容”。系统不得自行替换主题或反转你的立场。</p>
+
+      <label for="positioning">账号定位、目标读者、作者声音（选填）</label>
+      <textarea id="positioning" name="positioning" style="min-height:100px" placeholder="例如：面向普通消费者，讲清日常使用中的取舍；作者直白、有判断，不堆参数。不填则沿用赛道人设。"></textarea>
+
+      <label for="source">仿写原文</label>
+      <textarea id="source" name="source" placeholder="直接粘贴需要参考的原文" required></textarea>
+
+      <label for="mode">手动选择赛道</label>
+      <select id="mode" name="mode" required>
+        <option value="" disabled selected>请选择赛道</option>
+        <option value="通用">通用</option>
+        <option value="数码">数码</option>
+        <option value="汽车">汽车</option>
+        <option value="体制内">体制内</option>
+        <option value="监狱">监狱</option>
+      </select>
+      <p class="hint">标题会读取 <code>reference/titles/赛道.txt</code>；人味终稿会读取 <code>prompts/personas/赛道.md</code>。</p>
+      <details><summary>查看当前赛道实际文件路径</summary><pre id="source-paths" class="report"></pre></details>
+
+      <div class="settings">
+        <div>
+          <label for="model">模型</label>
+          <select id="model" name="model">
+            <option value="">使用 Codex 当前默认</option>
+            <option value="gpt-5.6-terra">gpt-5.6-terra（推荐：质量与速度平衡）</option>
+            <option value="gpt-5.6-luna">gpt-5.6-luna（更快）</option>
+            <option value="gpt-5.6-sol">gpt-5.6-sol（更强）</option>
+            <option value="gpt-5.5">gpt-5.5</option>
+            <option value="gpt-5.4">gpt-5.4</option>
+            <option value="gpt-5.4-mini">gpt-5.4-mini（更省资源）</option>
+          </select>
+        </div>
+        <div>
+          <label for="reasoning_effort">推理强度</label>
+          <select id="reasoning_effort" name="reasoning_effort">
+            <option value="">使用 Codex 当前默认</option>
+            <option value="low">低：最快</option>
+            <option value="medium">中：速度与质量平衡</option>
+            <option value="high">高：推荐写作使用</option>
+            <option value="xhigh">很高：更慢，适合复杂任务</option>
+            <option value="max">最高：更慢</option>
+            <option value="ultra">超级：最慢，仅部分模型支持</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint">这项设置会固定用于本次的仿写、标题、人味终稿三步；选择“当前默认”时，沿用你电脑中 Codex 的默认设置。</p>
+      <label for="title_count">备选标题数量</label>
+      <input id="title_count" name="title_count" type="number" value="40" min="10" max="60" required>
+      <p class="hint">完整标题提示词默认40个；正文800–1500字。解构、标题M1–M7和自检报告另外保存。</p>
+
+      <div class="actions">
+        <button id="submit" type="submit" disabled>正在连接…</button>
+        <span id="status" aria-live="polite"></span>
+      </div>
+    </form>
+
+    <section class="card" style="margin-top:24px">
+      <div class="actions" style="margin-top:0"><h2 style="margin:0;font-size:20px">已提交任务</h2><button id="refresh-jobs" type="button">刷新</button></div>
+      <p class="hint">网页与终端共用。刷新页面、手机断开后，可在这里重新打开任务。Mac需保持开机联网；旧版历史稿原位置保留。</p>
+      <div id="jobs"></div>
+      <p id="job-status" aria-live="polite"></p>
+      <button id="retry-job" type="button" hidden>从失败步骤续跑</button>
+    </section>
+
+    <section id="result" class="card">
+      <div class="actions" style="margin-top:0">
+        <h2 style="margin:0;font-size:20px">备选标题</h2>
+        <button id="copy-title" type="button">复制选中的标题</button>
+      </div>
+      <p class="hint">点击一个标题即可选中。标题来自第 2 步，所有备选标题都会保留在这里。</p>
+      <div id="title-list"></div>
+      <input id="selected-title" readonly aria-label="已选标题">
+      <div class="actions">
+        <h2 style="margin:0;font-size:20px">人味终稿正文</h2>
+        <button id="copy-body" type="button">复制正文</button>
+        <button id="copy-final" type="button">复制标题和正文</button>
+      </div>
+      <textarea id="final-content" readonly aria-label="人味终稿正文"></textarea>
+      <p id="path" class="path" style="white-space:pre-wrap"></p>
+      <section aria-label="文章配图">
+        <h2>文章配图</h2>
+        <p class="hint">搜图独立执行，正文已完成即可复制。这里只预览缩略图；勾选后点击下载，才把原图保存到 Mac。场景示意图不是该型号实物图。</p>
+        <p id="image-status" style="white-space:pre-wrap" aria-live="polite"></p>
+        <div class="actions"><button id="search-images" type="button">重新搜图</button><button id="download-images" type="button">下载所选图片</button></div>
+        <div id="image-cards"></div>
+        <details><summary>配图报告</summary><pre id="image-report" class="report"></pre></details>
+      </section>
+      <details>
+        <summary>查看运行信息</summary>
+        <pre id="console"></pre>
+      </details>
+      <details><summary>仿写解构、联网素材与传播力报告</summary><pre id="report-rewrite" class="report"></pre></details>
+      <details><summary>标题完整 M1–M7 报告（含额外风格包）</summary><pre id="report-titles" class="report"></pre></details>
+      <details><summary>人味增强自检报告</summary><pre id="report-human" class="report"></pre></details>
+      <details><summary>本任务使用的原文件、快照和校验值</summary><pre id="provenance" class="report"></pre></details>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fields = ['topic','brief','source','mode','positioning','model','reasoning_effort','title_count'];
+    let config, activeId = sessionStorage.getItem('wechat_active_job') || '', timer, generation = 0;
+    let selectionBusy = false;
+    for (const key of fields) {
+      const saved = sessionStorage.getItem('wechat_' + key);
+      if (saved !== null) $(key).value = saved;
+      $(key).addEventListener('input', () => sessionStorage.setItem('wechat_' + key, $(key).value));
+      $(key).addEventListener('change', () => sessionStorage.setItem('wechat_' + key, $(key).value));
+    }
+
+    async function api(url, body) {
+      const response = await fetch(url, body === undefined ? {} : {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || '请求失败');
+      return data;
+    }
+
+    function updateOptions() {
+      const actualModel = $('model').value || config.defaults.model;
+      const allowed = config.models[actualModel] || ['low','medium','high','xhigh','max','ultra'];
+      for (const option of $('reasoning_effort').options) option.disabled = !!option.value && !allowed.includes(option.value);
+      if ($('reasoning_effort').selectedOptions[0]?.disabled) {
+        $('reasoning_effort').value = '';
+        sessionStorage.setItem('wechat_reasoning_effort', '');
+      }
+      const paths = config.resources[$('mode').value];
+      $('source-paths').textContent = paths ? Object.entries(paths).map(([key,path]) => key + '：' + path).join('\n\n') : '请先选择赛道。';
+    }
+
+    async function refreshJobs() {
+      const data = await api('/api/jobs');
+      $('jobs').replaceChildren();
+      if (!data.jobs.length) $('jobs').textContent = '还没有新版任务。';
+      for (const job of data.jobs.slice(0, 60)) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = job.topic + ' · ' + job.mode + ' · ' + job.status_label + '\n' + job.id;
+        button.style.whiteSpace = 'pre-wrap';
+        button.setAttribute('aria-current', String(job.id === activeId));
+        button.onclick = () => openJob(job.id);
+        $('jobs').append(button);
+      }
+    }
+
+    function render(data) {
+      $('job-status').textContent = data.id + ' · ' + data.status_label + ' · ' + (data.stage_label || '准备启动') +
+        (data.error ? '\n' + data.error : '') + (data.warning ? '\n' + data.warning : '');
+      $('job-status').style.whiteSpace = 'pre-wrap';
+      $('retry-job').hidden = !['failed','interrupted'].includes(data.status);
+      $('result').style.display = 'block';
+      $('title-list').replaceChildren();
+      (data.titles || []).forEach((title, index) => {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'title-option';
+        button.textContent = (index + 1) + '. ' + title + (index === data.recommended_index ? '（推荐）' : '');
+        button.setAttribute('aria-pressed', String(title === data.final_title));
+        button.disabled = data.status !== 'completed' || selectionBusy;
+        button.onclick = async () => {
+          const id = activeId;
+          selectionBusy = true;
+          try {
+            const selected = await api('/api/jobs/' + id + '/select', {index});
+            if (id === activeId) { selectionBusy = false; render(selected); $('status').textContent = '标题选择已保存，终端也可读取。'; }
+          } catch (error) { $('status').textContent = error.message; }
+          finally { selectionBusy = false; }
+        };
+        $('title-list').append(button);
+      });
+      $('selected-title').value = data.final_title || '';
+      $('final-content').value = data.final_body || '';
+      $('copy-title').disabled = !data.final_title;
+      $('copy-body').disabled = !data.final_body;
+      $('copy-final').disabled = !data.final_body;
+      let paths = data.final_path ? '电脑母版：' + data.final_path : '任务文件：' + data.directory;
+      $('path').textContent = paths;
+      $('console').textContent = data.console || '';
+      for (const stage of ['rewrite','titles','human']) $('report-' + stage).textContent = data.reports?.[stage] || '此步骤尚未完成。';
+      $('provenance').textContent = JSON.stringify(data.sources, null, 2);
+      if (data.elapsed_seconds) $('job-status').textContent += '\n本次尝试已用 ' + data.elapsed_seconds + ' 秒；最后事件：' + (data.last_event_at || '等待模型响应');
+      if (data.progress_note) $('job-status').textContent += '\n'+data.progress_note;
+      renderImages(data);
+    }
+
+    function imageSelection(id) {
+      try { return new Set(JSON.parse(localStorage.getItem('wechat_images_'+id) || '[]')); }
+      catch { return new Set(); }
+    }
+    function safeLink(url) { try { const u = new URL(url); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } }
+    function renderImages(data) {
+      const images = data.images || {}, id = data.id, selected = imageSelection(id);
+      const busy = ['queued','searching','downloading'].includes(images.status);
+      const available = new Set((images.candidates || []).map(item=>item.id));
+      for (const key of selected) if (!available.has(key)) selected.delete(key);
+      localStorage.setItem('wechat_images_'+id,JSON.stringify([...selected]));
+      $('image-status').textContent = (images.status_label || '正文完成后自动搜图') + ' · 本次合格候选 ' + (images.candidates || []).filter(item=>!item.retained).length + ' 张' +
+        (images.elapsed_seconds ? ' · 已用 '+images.elapsed_seconds+'秒' : '') + (images.error ? '\n'+images.error : '') +
+        (images.provider_errors?.length ? '\n来源连接问题：\n'+images.provider_errors.join('\n') : '');
+      $('search-images').disabled = data.status !== 'completed' || busy;
+      $('download-images').disabled = busy || !selected.size;
+      $('image-report').textContent = images.report || '';
+      if (images.selected_title && images.selected_title !== data.final_title) $('image-status').textContent += '\n标题已更换，现有图片仍基于同一正文；需要时可重新搜图。';
+      $('image-cards').replaceChildren();
+      for (const item of images.candidates || []) {
+        const card = document.createElement('article'); card.className = 'image-card';
+        const download = images.downloads?.[item.id];
+        const preview = download?.status === 'completed' ? '/api/jobs/'+id+'/images/'+item.id : safeLink(item.thumbnailUrl);
+        if (preview) { const img = document.createElement('img'); img.src = preview; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.alt = item.title; img.onerror = () => { img.replaceWith(document.createTextNode('缩略图加载失败，请打开来源页查看。')); }; card.append(img); }
+        const label = document.createElement('label'), box = document.createElement('input'); box.type='checkbox'; box.checked=selected.has(item.id); box.disabled=busy;
+        box.onchange = () => { box.checked ? selected.add(item.id) : selected.delete(item.id); localStorage.setItem('wechat_images_'+id,JSON.stringify([...selected])); $('download-images').disabled = !selected.size || busy; };
+        label.append(box,document.createTextNode((item.retained ? '上次已下载 · ' : '')+(item.kind === 'product' ? '产品实物图 · ' : '场景示意图 · ')+item.title)); card.append(label);
+        for (const text of [item.author+' · '+item.width+'×'+item.height, item.license+' · '+(item.attributionRequired ? '须署名' : '无需强制署名'),item.usage_terms || '',item.relevance,download?.status === 'completed' ? '已保存：'+download.path : download?.error ? '下载失败：'+download.error : '尚未下载原图']) { const p = document.createElement('p'); p.textContent=text; card.append(p); }
+        for (const [text,url] of [['来源页面',item.sourcePageUrl],['授权条款',item.licenseUrl]]) { const a=document.createElement('a'); a.textContent=text+' '; a.href=safeLink(url); a.target='_blank'; a.rel='noopener noreferrer'; card.append(a); }
+        const copy=document.createElement('button'); copy.type='button'; copy.textContent='复制署名'; copy.onclick=()=>copyText(download?.attributionLine || item.attributionLine); card.append(copy);
+        $('image-cards').append(card);
+      }
+    }
+    async function imageAction(action) {
+      const id=activeId;
+      $('search-images').disabled=true; $('download-images').disabled=true;
+      try { await api('/api/jobs/'+id+'/images/'+action,action === 'download' ? {ids:[...imageSelection(id)]} : {}); if (activeId === id) { clearTimeout(timer); poll(++generation); } }
+      catch (error) { $('image-status').textContent=error.message; if (activeId === id) { clearTimeout(timer); timer=setTimeout(()=>poll(++generation),3000); } }
+    }
+    $('search-images').onclick=()=>imageAction('search');
+    $('download-images').onclick=()=>imageAction('download');
+
+    function openJob(id) {
+      activeId = id; generation++;
+      sessionStorage.setItem('wechat_active_job', id);
+      clearTimeout(timer);
+      $('result').style.display = 'none';
+      poll(generation);
+      refreshJobs().catch(error => { $('status').textContent = error.message; });
+    }
+
+    async function poll(token) {
+      const id = activeId;
+      try {
+        const data = await api('/api/jobs/' + id);
+        if (token !== generation || id !== activeId) return;
+        if (!selectionBusy) render(data);
+        if (['queued','running'].includes(data.status) || ['waiting','queued','searching','downloading'].includes(data.images?.status)) timer = setTimeout(() => poll(token), 3000);
+        else await refreshJobs();
+      } catch (error) {
+        if (token !== generation) return;
+        $('job-status').textContent = '暂时无法连接：' + error.message + '。已提交任务不受页面断线影响，正在重新连接。';
+        timer = setTimeout(() => poll(token), 5000);
+      }
+    }
+
+    $('writer-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      $('submit').disabled = true;
+      $('status').textContent = '正在提交到 Mac 后台…';
+      try {
+        const data = await api('/api/jobs', Object.fromEntries(new FormData($('writer-form'))));
+        $('status').textContent = '已提交：' + data.id + '。现在可关闭网页，或另开页面提交另一篇。';
+        openJob(data.id);
+      } catch (error) {
+        $('status').textContent = '提交未确认：' + error.message + '。请先刷新任务列表查看是否已有任务，避免重复提交。';
+      } finally { $('submit').disabled = false; }
+    });
+    $('refresh-jobs').onclick = () => {
+      refreshJobs().catch(error => { $('status').textContent = error.message; });
+      if (activeId) { clearTimeout(timer); poll(++generation); }
+    };
+    $('retry-job').onclick = async () => {
+      const id = activeId;
+      $('retry-job').disabled = true;
+      try { await api('/api/jobs/' + id + '/retry', {}); openJob(id); }
+      catch (error) { $('status').textContent = error.message; }
+      finally { $('retry-job').disabled = false; }
+    };
+
+    async function copyText(text) {
+      try {
+        if (!navigator.clipboard) throw new Error('剪贴板接口不可用');
+        await navigator.clipboard.writeText(text);
+        $('status').textContent = '已复制。';
+      } catch (error) {
+        const area = document.createElement('textarea');
+        area.value = text; document.body.append(area); area.select();
+        const copied = document.execCommand('copy'); area.remove();
+        $('status').textContent = copied ? '已复制。' : '浏览器不允许自动复制，请长按或全选文本复制。';
+      }
+    }
+    $('copy-title').onclick = () => copyText($('selected-title').value);
+    $('copy-body').onclick = () => copyText($('final-content').value);
+    $('copy-final').onclick = () => copyText($('selected-title').value + '\n\n' + $('final-content').value);
+
+    async function init() {
+      try {
+        config = await api('/api/options');
+        const savedModel = $('model').value;
+        $('model').replaceChildren(new Option('使用当前默认（' + (config.defaults.model || '由 Codex 决定') + '）', ''));
+        for (const model of Object.keys(config.models)) $('model').add(new Option(model, model));
+        $('model').value = savedModel;
+        $('reasoning_effort').options[0].textContent = '使用当前默认（' + (config.defaults.reasoning_effort || '由 Codex 决定') + '）';
+        $('model').onchange = updateOptions; $('mode').onchange = updateOptions;
+        updateOptions();
+        $('submit').disabled = false; $('submit').textContent = '提交，一次跑完';
+        await refreshJobs();
+        if (activeId) openJob(activeId);
+      } catch (error) { $('status').textContent = '连接失败：' + error.message + '。请刷新页面。'; }
+    }
+    init();
+  </script>
+</body>
+</html>

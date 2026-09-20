@@ -1,0 +1,18 @@
+# 本机任务、文章、图片、运行日志与历史备份均不进入仓库。
+output/
+backups/
+
+# Python / macOS / 本机配置。
+__pycache__/
+**/__pycache__/
+*.py[cod]
+node_modules/
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# 这些是个人临时对标原文，不是工作流运行所需资料。
+reference/fanwen.txt
+reference/对标_*.txt
+tests/数码真实验收输入.json

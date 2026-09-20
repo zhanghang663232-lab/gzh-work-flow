@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""测试替身：只验证程序接线，不声称评估真实文章质量。"""
+import json
+import os
+from pathlib import Path
+import sys
+import time
+args = sys.argv[1:]
+if '--no-alt-screen' in args:
+    print(json.dumps(args,ensure_ascii=False))
+    sys.exit(0)
+if args[:2] == ['login','status']:
+    print('Logged in using fixture')
+    sys.exit(0)
+raw = Path(args[args.index('--output-last-message') + 1])
+schema = json.loads(Path(args[args.index('--output-schema') + 1]).read_text())
+prompt = sys.stdin.read()
+stage = raw.stem.split('-')[0]
+if os.environ.get('FAKE_CODEX_DELAY'):
+    time.sleep(float(os.environ['FAKE_CODEX_DELAY']))
+marker = Path(os.environ.get('FAKE_CODEX_FAIL_MARKER', '/nonexistent-fixture-marker'))
+if marker.exists() and stage == 'titles':
+    print('fixture requested title failure')
+    sys.exit(7)
+body = '\n\n'.join('这是流程自动验证用的虚构样稿，不代表真实新闻或产品测评。我只检查任务在后台是否继续运行，原文和用户主题是否被保存，网页与终端能否看到同样的标题和正文。' for _ in range(13))
+if stage == 'images':
+    result = {'report':'离线配图测试，无网络请求。','selected':[]}
+    records = [{'name':'search_images','args':{'query':q},'result':{'structuredContent':{'results':[],'providerReports':[]}}} for q in ['准确型号','使用场景','健康管理']]
+    raw.with_suffix('.tools.jsonl').write_text('\n'.join(json.dumps(r) for r in records))
+elif stage == 'titles':
+    count = schema['properties']['titles']['minItems']
+    result = {'report':'\n'.join(f'M{i} 完整模块测试占位，不代表真实质量' for i in range(1,8)),
+              'titles':['2.5倍长焦应该怎么选，先看日常生活里每天拍什么'] + [f'测试标题{i}：先想清楚日常生活里面真正需要什么' for i in range(2,count+1)],
+              'recommended_index':2}
+    result['report'] += '\n' + '\n'.join(result['titles'])
+else:
+    result = {'report':f'{stage} 完整报告测试占位，生产环境须生成完整内容', 'body':body}
+raw.write_text(json.dumps(result, ensure_ascii=False))
+print(json.dumps({'type':'item.completed','item':{'type':'web_search','query':'fixture'}}) if stage == 'rewrite' else '{}')
