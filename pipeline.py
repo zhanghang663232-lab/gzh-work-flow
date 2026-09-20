@@ -12,15 +12,17 @@ import os
 from pathlib import Path
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-import tomllib
 import unicodedata
 import uuid
+
+from workflow import config as provider_config
+from workflow import prompts as prompt_engine
+from workflow import providers
 
 ROOT = Path(__file__).resolve().parent
 # 默认使用仓库自带的三份核心提示词；需要团队共享一套提示词时，可用
@@ -93,26 +95,14 @@ def settings():
         match = re.fullmatch(r'([A-Z_]+)=(.*)', line.strip())
         if match:
             values[match[1]] = match[2].strip().strip('"\'')
-    codex_config = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
-    config = tomllib.loads(codex_config.read_text()) if codex_config.exists() else {}
-    # 只保留两个非敏感默认项，绝不把账号配置或令牌写进任务。
-    return {'model': values.get('CODEX_MODEL') or config.get('model', ''),
-            'reasoning_effort': values.get('CODEX_REASONING_EFFORT') or config.get('model_reasoning_effort', ''),
+    workflow = provider_config.load_config()['workflow']
+    # 兼容旧任务中的 model 字段；新任务使用 profile 路由。
+    return {'model': values.get('CODEX_MODEL', 'gpt-5.6-sol'),
+            'reasoning_effort': values.get('CODEX_REASONING_EFFORT', 'high'),
+            'default_profile': workflow['default_profile'],
+            'search_fallback_profile': workflow['search_fallback_profile'],
             'timeout': int(values.get('CODEX_TIMEOUT_SECONDS', 900)),
             'attempts': int(values.get('MAX_RETRIES', 2))}
-
-
-def writing_only_overrides():
-    """仅对这一条写作调用禁用无关插件/MCP，不修改用户全局配置。"""
-    path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
-    config = tomllib.loads(path.read_text()) if path.exists() else {}
-    overrides = ['features.hooks=false', 'features.plugins=false', 'features.unbounded_connection_retries=false']
-    for category in ('plugins', 'mcp_servers'):
-        for name in config.get(category, {}):
-            # Codex 的 -c 左侧按点分段，不解析 TOML 引号；带引号会创建错误的新工具条目。
-            if '.' not in name:
-                overrides.append(category + '.' + name + '.enabled=false')
-    return overrides
 
 
 def writing_environment():
@@ -145,10 +135,33 @@ def resources(mode):
 
 
 def options():
-    return {'modes': MODES, 'models': MODEL_EFFORTS, 'defaults': settings(),
+    provider_options = provider_config.public_options()
+    return {'modes': MODES, 'models': MODEL_EFFORTS, 'defaults': settings(), **provider_options,
             'core_prompts': {k: str(v) for k, v in CORE_FILES.items()},
             'resources': {mode: {k: str(v) for k, v in resources(mode).items()} for mode in MODES},
             'title_count': 40}
+
+
+def environment_checks():
+    """只读环境检查；不创建任务、不调用模型、不暴露本机密钥。"""
+    supported = sys.platform == 'darwin' or sys.platform.startswith('linux')
+    prompt_files = list(CORE_FILES.values())
+    resource_files = [value for mode in MODES for value in resources(mode).values()]
+    target = output_root()
+    writable_parent = target if target.exists() else target.parent
+    return [
+        {'name': '操作系统', 'ok': supported, 'detail': sys.platform + ('（支持）' if supported else '（仅支持 macOS、Linux 或 WSL）')},
+        {'name': 'Python', 'ok': sys.version_info >= (3, 11), 'detail': platform_python_version()},
+        {'name': '核心提示词', 'ok': all(path.is_file() and path.stat().st_size for path in prompt_files),
+         'detail': f'{sum(path.is_file() and path.stat().st_size > 0 for path in prompt_files)}/{len(prompt_files)} 份可读'},
+        {'name': '五赛道资料', 'ok': all(path.is_file() and path.stat().st_size for path in resource_files),
+         'detail': f'{sum(path.is_file() and path.stat().st_size > 0 for path in resource_files)}/{len(resource_files)} 个文件可读'},
+        {'name': '输出目录', 'ok': writable_parent.exists() and os.access(writable_parent, os.W_OK), 'detail': str(target)},
+    ]
+
+
+def platform_python_version():
+    return '.'.join(str(part) for part in sys.version_info[:3])
 
 
 def validate_input(payload):
@@ -168,11 +181,28 @@ def validate_input(payload):
     if result['model'] and result['model'] not in MODEL_EFFORTS:
         raise ValueError('模型不在可选列表中。')
     defaults = settings()
-    effective_model = result['model'] or defaults['model']
-    effort = result['reasoning_effort'] or defaults['reasoning_effort']
-    allowed = MODEL_EFFORTS.get(effective_model, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
-    if effort and effort not in allowed:
-        raise ValueError(f'{effective_model} 不支持推理强度 {effort}；请明确选择兼容强度。')
+    routing_payload = dict(payload)
+    # 旧网页或历史JSON显式传 model 时仍然按 Codex 执行。
+    if result['model']:
+        routing_payload['default_profile'] = 'codex'
+        routing_payload['stage_profiles'] = {stage: 'codex' for stage in STAGES}
+    routing = provider_config.resolve_stage_profiles(routing_payload)
+    for profile_id in set(routing['stage_profiles'].values()):
+        provider_config.resolve_profile(profile_id)
+    profiles = provider_config.load_config()['profiles']
+    default_profile = profiles[routing['default_profile']]
+    effective_model = result['model'] or default_profile['model']
+    effort = result['reasoning_effort'] or default_profile.get('reasoning_effort') or defaults['reasoning_effort']
+    if result['model'] and effort not in MODEL_EFFORTS[result['model']]:
+        raise ValueError(f'{result["model"]} 不支持推理强度 {effort}；请明确选择兼容强度。')
+    stage_efforts = {}
+    for stage, profile_id in routing['stage_profiles'].items():
+        profile = profiles[profile_id]
+        stage_effort = result['reasoning_effort'] or profile.get('reasoning_effort', '')
+        allowed = profile.get('supported_efforts', [])
+        if stage_effort and stage_effort not in allowed:
+            raise ValueError(f'{profile["label"]} 不支持推理强度 {stage_effort}；可用值：{", ".join(allowed) or "不支持设置"}。')
+        stage_efforts[stage] = stage_effort
     raw_count = payload.get('title_count', 40)
     if isinstance(raw_count, bool) or not re.fullmatch(r'\d+', str(raw_count)):
         raise ValueError('标题数量必须是 10–60 的整数。')
@@ -180,6 +210,8 @@ def validate_input(payload):
     if count < 10:
         raise ValueError('标题数量至少为 10。')
     result.update(title_count=count, effective_model=effective_model, effective_effort=effort,
+                  default_profile=routing['default_profile'], stage_profiles=routing['stage_profiles'],
+                  stage_efforts=stage_efforts,
                   timeout=max(30, defaults['timeout']), attempts=max(1, defaults['attempts']))
     return result
 
@@ -221,7 +253,7 @@ def create_job(payload):
     save_json(path / 'job.json', {'id': job_id, 'topic': inputs['topic'], 'mode': inputs['mode'],
                                'status': 'queued', 'stage': '', 'completed_stages': [],
                                'created_at': now(), 'updated_at': now(), 'error': '',
-                               'selected_index': None, 'worker_pid': None,
+                               'selected_index': None, 'worker_pid': None, 'stage_runs': {},
                                'warning': '参考标题不足 10 条，M1 不做统计，仅作主导动机判断。' if len(references) < 10 else ''})
     return job_id
 
@@ -265,8 +297,8 @@ def start_job(job_id):
     path = job_dir(job_id)
     with lock(path / '.start.lock'):
         state = state_of(job_id)
-        # 写作 worker 会先把正文状态写成 completed，再收尾启动独立配图并释放 run.lock。
-        # 用户恰好在这个很短的窗口点“重试”时，等收尾结束后再判断，避免把一次有效重试吞掉。
+        # worker 会先把正文状态写成 completed，再释放 run.lock。用户恰好在这个很短的
+        # 窗口点“重试”时，等收尾结束后再判断，避免把一次有效重试吞掉。
         if state['status'] == 'completed' and busy(path):
             deadline = time.monotonic() + 3
             while busy(path) and time.monotonic() < deadline:
@@ -307,73 +339,18 @@ def submit_job(payload):
 
 
 def schema_for(stage, count):
-    properties = {'report': {'type': 'string'}}
-    if stage == 'titles':
-        # 字数由返回后的中文文本校验负责。解码阶段强行minLength会在标题尾部补语气词或句点。
-        properties.update(titles={'type': 'array', 'items': {'type': 'string'}, 'minItems': count, 'maxItems': count},
-                          recommended_index={'type': 'integer', 'minimum': 0, 'maximum': count - 1})
-    else:
-        properties['body'] = {'type': 'string'}
-    return {'type': 'object', 'properties': properties, 'required': list(properties), 'additionalProperties': False}
+    return prompt_engine.schema_for(stage, count)
 
 
 def build_prompt(path, stage):
-    inputs = read_json(path / 'input.json')
-    snap = path / 'snapshot'
-    text = lambda key: (snap / (key + '.md')).read_text()
-    common = {'手动赛道': inputs['mode'], '主题（不可篡改）': inputs['topic'],
-              '写作要求与立场（不可篡改）': inputs['brief'], '账号定位、读者与作者声音': inputs['positioning'],
-              '标题数量': inputs['title_count']}
-    # 完整原文包含在输入中；不摘句、不截断、不替换为旧的精简版。
-    chunks = [text('boundary'), text('adapter'), '\n【本阶段】' + stage,
-              '【本步骤是否允许联网】' + ('是' if stage == 'rewrite' else '否'),
-              '【当前日期】' + now(), '【核心提示词全文开始】\n' + text(stage) + '\n【核心提示词全文结束】',
-              '【输入参数 JSON】\n' + json.dumps(common, ensure_ascii=False),
-              '【本赛道人设全文（身份、语气、读者约束；不启动其中另一套流程）】\n' + text('persona')]
-    if stage == 'rewrite':
-        chunks.append('【参考原文，仅借鉴结构与节奏，不作为新主题事实】\n' + inputs['source'])
-        chunks.append('输出 JSON：report 保存完整解构表、联网素材简报（至少3条资料，来源链接与日期）、传播力自评；'
-                      'body 单独保存800–1500字仿写正文，不带报告或文章标题。必须实际调用联网搜索。')
-    else:
-        rewrite = read_json(path / 'rewrite.json')
-        chunks += ['【仿写正文】\n' + rewrite['body'], '【已有素材与来源报告】\n' + rewrite['report']]
-        if stage == 'titles':
-            chunks += ['【该赛道参考标题全文】\n' + text('references'),
-                       '输出 JSON：report 按原提示词完整保存 M1→M7（含所有表格、词库、逐条注释评分、Top推荐和资产包），'
-                       '不允许仅写总结。titles 提取M5精修后的全部主标题，顺序对应原编号，恰好'
-                       + str(inputs['title_count']) + '条纯标题。每条严格20–28个非空白字符，逐条实际计数，不能只在报告里声称合格；'
-                       '请先构造信息完整、自然的20–28字标题；正常中文标点也计入字符数。不得为了达标在句尾堆叠啊、吧、呢、呀、其实吧或多余句点。'
-                       '太短时补充具体对象、场景或收益，不添加无意义尾巴。'
-                       'M5最终标题须与titles数组逐字一致。不得混入方向、评分、确认行。recommended_index 为Top1在titles里的0起始下标。'
-                       'A/B仅按原提示词输入条件启用；额外风格包与资产留在report，不替代主标题。'
-                       '数量较小时若每桶至少6条与35%上限无法同时成立，report 明示此数学冲突，优先保证总数、分布多样与35%上限。']
-        else:
-            titles = read_json(path / 'titles.json')
-            chunks += ['【备选标题】\n' + json.dumps(titles['titles'], ensure_ascii=False),
-                       '【推荐标题】' + titles['titles'][titles['recommended_index']],
-                       '输出 JSON：body 为800–1500字人味终稿正文，不带标题或报告；report 保存逐项自检结果及必要修改说明。'
-                       '保留已核实事实、出处与用户立场，不再联网。人设中的其他工作流不重复执行。'
-                       '原提示词的生活细节要求不可用于捏造亲测、采访、价格、统计或消息；个人场景只能采用用户明确提供的真实经历或输入材料。'
-                       '没有材料就删去个人场景，禁止用“设想、想象、假设”等标签包装虚构经历，也不得用随意具体数字替换模糊事实。'
-                       '人味提示词全程第一人称要求用于本次终稿，原文结构借鉴不得反转用户立场。']
-    return '\n\n'.join(chunks)
+    return prompt_engine.build_prompt(Path(path), stage, read_json)
 
 
 def codex_command(inputs, stage, raw_path, schema_path, workspace):
-    command = ['codex', '--ask-for-approval', 'never']
-    if inputs['effective_model']:
-        command += ['-m', inputs['effective_model']]
-    if inputs['effective_effort']:
-        command += ['-c', 'model_reasoning_effort=' + json.dumps(inputs['effective_effort'])]
-    gzh_skill = Path(os.environ.get('WECHAT_GZH_SKILL', str(Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'skills' / 'gzh'))).expanduser()
-    command += ['-c', 'web_search=' + json.dumps('live' if stage == 'rewrite' else 'disabled'),
-                '-c', 'project_doc_max_bytes=0',
-                '-c', 'skills.config=[{path=' + json.dumps(str(gzh_skill)) + ',enabled=false}]']
-    for override in writing_only_overrides():
-        command += ['-c', override]
-    command += ['exec', '--skip-git-repo-check', '-C', str(workspace), '--sandbox', 'read-only',
-                '--output-schema', str(schema_path), '--output-last-message', str(raw_path), '--json', '-']
-    return command
+    profile = dict(provider_config.load_config()['profiles']['codex'])
+    profile['model_override'] = inputs.get('effective_model', '')
+    return providers.codex_command(profile, stage, raw_path, schema_path, workspace,
+                                   inputs.get('effective_effort', ''), inputs.get('effective_model', ''))
 
 
 def validation_evidence(path, stage):
@@ -508,7 +485,7 @@ def render_outputs(path, stage, result):
 
 def run_stage(path, stage):
     inputs = read_json(path / 'input.json')
-    prompt = build_prompt(path, stage)
+    prompt = prompt_engine.build_prompt(path, stage, read_json)
     schema_path = path / 'snapshot' / (stage + '.schema.json')
     save_json(schema_path, schema_for(stage, inputs['title_count']))
     last_error = ''
@@ -536,49 +513,42 @@ def run_stage(path, stage):
         with (path / '_运行日志.log').open('a') as log:
             log.write(f'{now()} {LABELS[stage]} 第{attempt}次\n')
         attempt_clock = time.time()
-        succeeded, attempt_error, rc = False, '', None
+        succeeded, attempt_error, provider_meta = False, '', {}
         try:
-            with prompt_path.open('rb') as source, event_path.open('wb') as events:
-                child = subprocess.Popen(codex_command(inputs, stage, raw_path, schema_path, path / 'workspace'),
-                                         stdin=source, stdout=events, stderr=subprocess.STDOUT, start_new_session=True,
-                                         env=writing_environment())
-                try:
-                    # macOS睡眠期间monotonic可能暂停；墙上时钟也参与截止判断，唤醒后不继续无限等。
-                    started_wall, started_mono = time.time(), time.monotonic()
-                    last_size, heartbeat = -1, 0.0
-                    while child.poll() is None:
-                        elapsed = max(time.time() - started_wall, time.monotonic() - started_mono)
-                        if elapsed - heartbeat >= 5:
-                            size = event_path.stat().st_size
-                            changes = {'elapsed_seconds': int(elapsed)}
-                            if size != last_size:
-                                changes['last_event_at'] = dt.datetime.fromtimestamp(event_path.stat().st_mtime).astimezone().isoformat()
-                                last_size = size
-                            update_job(path, **changes)
-                            heartbeat = elapsed
-                        if elapsed >= inputs['timeout']:
-                            raise subprocess.TimeoutExpired(child.args, inputs['timeout'])
-                        time.sleep(min(.5, inputs['timeout'] - elapsed))
-                    rc = child.returncode
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGKILL)
-                    child.wait()
-                    update_job(path, exit_code=child.returncode, elapsed_seconds=int(elapsed))
-                    raise ValueError(f'本步骤超过 {inputs["timeout"]} 秒；最后事件见 {event_path.name}。')
-            update_job(path, exit_code=rc, elapsed_seconds=int(time.time() - started_wall),
-                       last_event_at=dt.datetime.fromtimestamp(event_path.stat().st_mtime).astimezone().isoformat())
-            if rc:
-                detail = event_error(event_path)
-                raise ValueError((detail or f'Codex 退出码 {rc}') + f'；详情：{event_path}')
-            result = read_json(raw_path)
+            profile_id = inputs.get('stage_profiles', {}).get(stage, 'codex')
+            profile, api_key = provider_config.resolve_profile(profile_id)
+            if profile['adapter'] == 'codex_cli' and inputs.get('model'):
+                profile = dict(profile, model_override=inputs['model'])
+
+            def heartbeat(elapsed, changed):
+                changes = {'elapsed_seconds': int(elapsed)}
+                if changed:
+                    changes['last_event_at'] = now()
+                update_job(path, **changes)
+
+            update_job(path, provider_profile=profile_id, provider_adapter=profile['adapter'],
+                       provider_model=profile.get('model_override') or profile['model'])
+            generation = providers.generate(providers.GenerationRequest(
+                profile=profile, api_key=api_key, stage=stage, prompt=prompt + correction,
+                schema=read_json(schema_path), timeout=inputs['timeout'],
+                reasoning_effort=inputs.get('stage_efforts', {}).get(stage, inputs.get('effective_effort', '')), raw_path=raw_path,
+                event_path=event_path, workspace=path / 'workspace', environment=writing_environment(),
+                heartbeat=heartbeat))
+            result, provider_meta = generation.output, generation.metadata
+            if generation.raw_response:
+                atomic_text(base.with_suffix('.provider-response.txt'), generation.raw_response)
             validate_result(stage, result, inputs, validation_evidence(path, stage))
-            if stage == 'rewrite' and not used_search(event_path):
-                raise ValueError('没有发现已完成的联网搜索调用；不能把仅凭已有知识生成当作完成素材搜索。')
             render_outputs(path, stage, result)
             # 完整 JSON 为该步骤的提交点；崩溃后仅重跑未提交步骤。
             save_json(path / (stage + '.json'), result)
+            state = read_json(path / 'job.json')
+            runs = dict(state.get('stage_runs', {}))
+            runs[stage] = provider_meta
+            update_job(path, stage_runs=runs, exit_code=0, elapsed_seconds=int(time.time() - attempt_clock),
+                       last_event_at=now())
             with (path / '_运行日志.log').open('a') as log:
-                log.write(f'{now()} {LABELS[stage]} 完成，耗时 {time.time() - started_wall:.1f} 秒，退出码 {rc}\n')
+                log.write(f'{now()} {LABELS[stage]} 完成，模型 {provider_meta.get("profile")} / '
+                          f'{provider_meta.get("model")}，耗时 {time.time() - attempt_clock:.1f} 秒\n')
             succeeded = True
             return
         except (OSError, ValueError) as error:
@@ -588,7 +558,9 @@ def run_stage(path, stage):
                 previous_output = raw_path.read_text()
             with (path / '_运行日志.log').open('a') as log:
                 log.write(f'{now()} 检查未通过：{last_error}\n')
-            if not should_retry(last_error):
+            if isinstance(error, providers.ProviderError) and not error.retryable:
+                break
+            if not isinstance(error, providers.ProviderError) and not should_retry(last_error):
                 break
         finally:
             latest = read_json(path / 'job.json')
@@ -596,7 +568,8 @@ def run_stage(path, stage):
                       'status':'completed' if succeeded else 'failed','error':attempt_error,
                       'started_at':dt.datetime.fromtimestamp(attempt_clock).astimezone().isoformat(),
                       'ended_at':now(),'elapsed_seconds':round(time.time()-attempt_clock,1),
-                      'exit_code':latest.get('exit_code',rc),'last_event_at':latest.get('last_event_at')})
+                      'provider':provider_meta,
+                      'exit_code':latest.get('exit_code'),'last_event_at':latest.get('last_event_at')})
     raise ValueError(last_error)
 
 
@@ -633,15 +606,6 @@ def worker(job_id):
                     completed.append(stage)
                     update_job(path, completed_stages=completed)
                 update_job(path, status='completed', error='')
-                try:
-                    import image_workflow
-                    image_workflow.start_search(job_id)
-                except Exception as error:
-                    # Even a missing/broken optional image module cannot roll back text completion.
-                    with (path / '_运行日志.log').open('a') as log:
-                        log.write(f'{now()} 配图启动失败（正文已完成）：{error}\n')
-                    save_json(path / 'images.json', {'status':'failed','candidates':[],
-                              'selected_ids':[],'downloads':{},'provider_errors':[],'error':str(error)})
             except Exception as error:
                 update_job(path, status='failed', error=str(error))
             finally:
@@ -673,12 +637,6 @@ def job_result(job_id):
         state['final_body'] = read_json(path / 'human.json')['body'].strip()
         state['final_content'] = state['final_title'] + '\n\n' + state['final_body']
         state['final_path'] = str(path / OUTPUTS['human'])
-    try:
-        import image_workflow
-        state['images'] = image_workflow.state_of(path)
-    except (ImportError, OSError, ValueError) as error:
-        state['images'] = {'status':'failed','status_label':'配图暂不可用，正文可正常复制',
-                           'candidates':[],'selected_ids':[],'downloads':{},'error':str(error)}
     state['console'] = (path / '_运行日志.log').read_text()[-8000:]
     return state
 
@@ -734,6 +692,9 @@ def main():
     p.add_argument('id')
     p.add_argument('number', type=int)
     sub.add_parser('options')
+    sub.add_parser('configure', help='安全写入本机API密钥文件')
+    p = sub.add_parser('doctor', help='检查模型配置；--live会发起最小真实调用')
+    p.add_argument('--live', action='store_true')
     p = sub.add_parser('prompts', help='列出真实调用路径，或导出三份完整核心提示词')
     p.add_argument('--export', action='store_true')
     p = sub.add_parser('legacy')
@@ -741,6 +702,33 @@ def main():
     args = parser.parse_args()
     if args.command == '_worker':
         worker(args.id)
+    elif args.command == 'configure':
+        provider_config.configure_interactive()
+    elif args.command == 'doctor':
+        checks = environment_checks()
+        for check in checks:
+            print(f'{check["name"]}：{"通过" if check["ok"] else "失败"} · {check["detail"]}')
+        if not all(check['ok'] for check in checks):
+            raise ValueError('基础环境检查未通过。')
+        rows = provider_config.doctor_rows()
+        for row in rows:
+            print(f'{row["id"]}：{"已配置" if row["configured"] else "未配置"} · {row["adapter"]} · {row["model"]} · '
+                  f'{"可原生联网" if row["native_search"] else "无原生联网"}')
+        if args.live:
+            for row in rows:
+                if not row['configured']:
+                    continue
+                profile, key = provider_config.resolve_profile(row['id'])
+                with tempfile.TemporaryDirectory(prefix='gzh-doctor-') as folder:
+                    base = Path(folder)
+                    schema = {'type':'object','properties':{'ok':{'type':'string'}},'required':['ok'],'additionalProperties':False}
+                    result = providers.generate(providers.GenerationRequest(
+                        profile=profile, api_key=key, stage='human',
+                        prompt='只返回JSON对象：{"ok":"ok"}，不得输出其他内容。', schema=schema,
+                        timeout=60, reasoning_effort=profile.get('reasoning_effort',''),
+                        raw_path=base/'result.json', event_path=base/'events.jsonl', workspace=base,
+                        environment=writing_environment()))
+                    print(f'{row["id"]}：真实调用成功 · {result.metadata.get("model")}')
     elif args.command == 'options':
         emit(options())
     elif args.command == 'prompts':

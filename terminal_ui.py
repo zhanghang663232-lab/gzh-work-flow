@@ -23,7 +23,7 @@ def choose_mode():
         value = input('赛道：').strip()
         if value in mapping:
             return mapping[value]
-        print('请输入1、2、3、4，或直接输入赛道名称。')
+        print('请输入1、2、3、4、5，或直接输入赛道名称。')
 
 
 def multiline_source():
@@ -44,10 +44,35 @@ def multiline_source():
     return source
 
 
+def choose_profiles():
+    options = pipeline.options()
+    configured = [item for item in options['profiles'].values() if item['configured']]
+    print('\n可用模型配置：')
+    for index, item in enumerate(configured, 1):
+        search = '，可联网' if item['native_search'] else ''
+        print(f'{index} {item["label"]} · {item["model"]}{search}')
+    default_id = options['routing']['default_profile']
+    raw = input(f'默认模型（直接回车使用 {default_id}）：').strip()
+    if raw:
+        if not raw.isdigit() or not 1 <= int(raw) <= len(configured):
+            raise ValueError('模型编号无效。')
+        default_id = configured[int(raw) - 1]['id']
+    stage_profiles = {}
+    if input('要分别指定三个阶段的模型吗？输入 y 才设置：').strip().lower() == 'y':
+        for stage, label in [('rewrite','仿写'),('titles','标题'),('human','人味终稿')]:
+            raw = input(f'{label}模型编号（回车跟随默认）：').strip()
+            if raw:
+                if not raw.isdigit() or not 1 <= int(raw) <= len(configured):
+                    raise ValueError('模型编号无效。')
+                stage_profiles[stage] = configured[int(raw) - 1]['id']
+    return default_id, stage_profiles
+
+
 def new_job():
     defaults = pipeline.settings()
     print('公众号写作·手机终端')
-    print(f'默认模型：{defaults["model"] or "Codex默认"}；推理强度：{defaults["reasoning_effort"] or "Codex默认"}；标题：40个')
+    print(f'默认配置：{defaults["default_profile"]}；推理强度：{defaults["reasoning_effort"]}；标题：40个')
+    default_profile, stage_profiles = choose_profiles()
     mode = choose_mode()
     topic = required('\n新主题：')
     brief = input('你的写法和态度（可留空）：').strip()
@@ -55,7 +80,8 @@ def new_job():
     source = multiline_source()
     state = pipeline.submit_job({'topic': topic, 'source': source, 'mode': mode,
                                  'brief': brief, 'positioning': positioning,
-                                 'model': '', 'reasoning_effort': '', 'title_count': 40})
+                                 'model': '', 'reasoning_effort': '', 'title_count': 40,
+                                 'default_profile': default_profile, 'stage_profiles': stage_profiles})
     print('\n✅ 已提交，可以断开手机连接。')
     print('任务编号：' + state['id'])
     print('电脑目录：' + str(pipeline.job_dir(state['id'])))
@@ -92,11 +118,8 @@ def status(args):
     print('电脑目录：' + state['directory'])
     if state.get('elapsed_seconds') is not None:
         print('本次尝试已用时：' + str(state['elapsed_seconds']) + '秒')
-    import image_workflow
-    pictures = image_workflow.state_of(pipeline.job_dir(state['id']))
-    print('配图：' + pictures['status_label'])
-    if pictures.get('error'):
-        print('配图问题：' + pictures['error'])
+    if state.get('provider_profile'):
+        print('模型：' + state['provider_profile'] + ' / ' + state.get('provider_model', ''))
     if state.get('last_event_at'):
         print('最后事件时间：' + state['last_event_at'])
     if state.get('progress_note'):
@@ -115,7 +138,6 @@ def show(args):
     print('\n【终稿】\n')
     print(result['final_content'])
     print('\n【电脑终稿】\n' + result['final_path'])
-    print('配图请在 Mac 网页的同一任务中选择。')
 
 
 def select(args):

@@ -11,6 +11,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+config/providers.local.toml
+config/secrets.local.toml
 
 # 这些是个人临时对标原文，不是工作流运行所需资料。
 reference/fanwen.txt

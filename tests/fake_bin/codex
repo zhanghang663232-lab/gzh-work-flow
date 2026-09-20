@@ -23,11 +23,7 @@ if marker.exists() and stage == 'titles':
     print('fixture requested title failure')
     sys.exit(7)
 body = '\n\n'.join('这是流程自动验证用的虚构样稿，不代表真实新闻或产品测评。我只检查任务在后台是否继续运行，原文和用户主题是否被保存，网页与终端能否看到同样的标题和正文。' for _ in range(13))
-if stage == 'images':
-    result = {'report':'离线配图测试，无网络请求。','selected':[]}
-    records = [{'name':'search_images','args':{'query':q},'result':{'structuredContent':{'results':[],'providerReports':[]}}} for q in ['准确型号','使用场景','健康管理']]
-    raw.with_suffix('.tools.jsonl').write_text('\n'.join(json.dumps(r) for r in records))
-elif stage == 'titles':
+if stage == 'titles':
     count = schema['properties']['titles']['minItems']
     result = {'report':'\n'.join(f'M{i} 完整模块测试占位，不代表真实质量' for i in range(1,8)),
               'titles':['2.5倍长焦应该怎么选，先看日常生活里每天拍什么'] + [f'测试标题{i}：先想清楚日常生活里面真正需要什么' for i in range(2,count+1)],

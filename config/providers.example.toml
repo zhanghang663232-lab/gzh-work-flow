@@ -1,0 +1,66 @@
+[workflow]
+default_profile = "codex"
+search_fallback_profile = "codex"
+
+[profiles.codex]
+label = "Codex（本机登录）"
+adapter = "codex_cli"
+model = "gpt-5.6-sol"
+reasoning_effort = "high"
+native_search = true
+strict_json_schema = true
+supports_reasoning_effort = true
+supported_efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
+
+[profiles.claude]
+label = "Claude API"
+adapter = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-sonnet-4-6"
+api_key_name = "anthropic_api_key"
+reasoning_effort = "high"
+native_search = true
+strict_json_schema = true
+supports_reasoning_effort = true
+supported_efforts = ["low", "medium", "high", "max"]
+max_output_tokens = 32000
+
+[profiles.doubao]
+label = "豆包·火山方舟"
+adapter = "volcengine_ark"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+model = "请在providers.local.toml填写你的模型或推理接入点ID"
+api_key_name = "doubao_api_key"
+reasoning_effort = "high"
+native_search = true
+strict_json_schema = true
+supports_reasoning_effort = true
+supported_efforts = ["low", "medium", "high"]
+max_output_tokens = 32000
+
+[profiles.deepseek]
+label = "DeepSeek API"
+adapter = "openai_compatible"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+api_key_name = "deepseek_api_key"
+reasoning_effort = "high"
+native_search = false
+strict_json_schema = false
+supports_reasoning_effort = true
+supported_efforts = ["low", "medium", "high", "xhigh", "max"]
+thinking_enabled = true
+max_output_tokens = 32000
+
+# 复制下面这段即可增加 OpenRouter、通义、Ollama、LM Studio 或其他兼容服务。
+# [profiles.custom]
+# label = "自定义 OpenAI 兼容接口"
+# adapter = "openai_compatible"
+# base_url = "https://example.com/v1"
+# model = "your-model"
+# api_key_name = "custom_api_key"
+# native_search = false
+# strict_json_schema = false
+# supports_reasoning_effort = false
+# supported_efforts = []
+# max_output_tokens = 32000

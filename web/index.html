@@ -37,11 +37,6 @@
     .title-option:hover, .title-option[aria-pressed="true"] { background: #e8f0fe; border-color: #1565d8; color: #124eab; }
     .path { margin: 10px 0 0; color: #5d6c80; font-size: 13px; overflow-wrap: anywhere; }
     #console { white-space: pre-wrap; background: #172033; color: #dbe7ff; border-radius: 9px; padding: 14px; max-height: 240px; overflow: auto; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    #image-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; margin-top:16px; }
-    .image-card { border:1px solid #d8e0eb; border-radius:9px; padding:12px; overflow-wrap:anywhere; }
-    .image-card img { width:100%; height:170px; object-fit:contain; background:#f4f6f8; }
-    .image-card input { width:auto; margin-right:8px; }
-    .image-card p { font-size:13px; line-height:1.6; }
     @media (max-width: 620px) { .settings { grid-template-columns: 1fr; gap: 0; } }
   </style>
 </head>
@@ -77,21 +72,13 @@
 
       <div class="settings">
         <div>
-          <label for="model">模型</label>
-          <select id="model" name="model">
-            <option value="">使用 Codex 当前默认</option>
-            <option value="gpt-5.6-terra">gpt-5.6-terra（推荐：质量与速度平衡）</option>
-            <option value="gpt-5.6-luna">gpt-5.6-luna（更快）</option>
-            <option value="gpt-5.6-sol">gpt-5.6-sol（更强）</option>
-            <option value="gpt-5.5">gpt-5.5</option>
-            <option value="gpt-5.4">gpt-5.4</option>
-            <option value="gpt-5.4-mini">gpt-5.4-mini（更省资源）</option>
-          </select>
+          <label for="default_profile">默认模型配置</label>
+          <select id="default_profile" name="default_profile"></select>
         </div>
         <div>
           <label for="reasoning_effort">推理强度</label>
           <select id="reasoning_effort" name="reasoning_effort">
-            <option value="">使用 Codex 当前默认</option>
+            <option value="">使用模型配置默认值</option>
             <option value="low">低：最快</option>
             <option value="medium">中：速度与质量平衡</option>
             <option value="high">高：推荐写作使用</option>
@@ -101,7 +88,13 @@
           </select>
         </div>
       </div>
-      <p class="hint">这项设置会固定用于本次的仿写、标题、人味终稿三步；选择“当前默认”时，沿用你电脑中 Codex 的默认设置。</p>
+      <div class="settings">
+        <div><label for="rewrite_profile">仿写与联网模型</label><select id="rewrite_profile" name="rewrite_profile"><option value="">跟随默认，必要时自动切搜索模型</option></select></div>
+        <div><label for="titles_profile">标题模型</label><select id="titles_profile" name="titles_profile"><option value="">跟随默认</option></select></div>
+        <div><label for="human_profile">人味终稿模型</label><select id="human_profile" name="human_profile"><option value="">跟随默认</option></select></div>
+      </div>
+      <p id="profile-status" class="hint"></p>
+      <p class="hint">仿写阶段必须有真实联网记录；所选模型不支持原生联网时，会自动改用配置中的搜索回退模型。</p>
       <label for="title_count">备选标题数量</label>
       <input id="title_count" name="title_count" type="number" value="40" min="10" max="60" required>
       <p class="hint">完整标题提示词默认40个；正文800–1500字。解构、标题M1–M7和自检报告另外保存。</p>
@@ -135,14 +128,6 @@
       </div>
       <textarea id="final-content" readonly aria-label="人味终稿正文"></textarea>
       <p id="path" class="path" style="white-space:pre-wrap"></p>
-      <section aria-label="文章配图">
-        <h2>文章配图</h2>
-        <p class="hint">搜图独立执行，正文已完成即可复制。这里只预览缩略图；勾选后点击下载，才把原图保存到 Mac。场景示意图不是该型号实物图。</p>
-        <p id="image-status" style="white-space:pre-wrap" aria-live="polite"></p>
-        <div class="actions"><button id="search-images" type="button">重新搜图</button><button id="download-images" type="button">下载所选图片</button></div>
-        <div id="image-cards"></div>
-        <details><summary>配图报告</summary><pre id="image-report" class="report"></pre></details>
-      </section>
       <details>
         <summary>查看运行信息</summary>
         <pre id="console"></pre>
@@ -155,7 +140,7 @@
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
-    const fields = ['topic','brief','source','mode','positioning','model','reasoning_effort','title_count'];
+    const fields = ['topic','brief','source','mode','positioning','default_profile','rewrite_profile','titles_profile','human_profile','reasoning_effort','title_count'];
     let config, activeId = sessionStorage.getItem('wechat_active_job') || '', timer, generation = 0;
     let selectionBusy = false;
     for (const key of fields) {
@@ -175,15 +160,18 @@
     }
 
     function updateOptions() {
-      const actualModel = $('model').value || config.defaults.model;
-      const allowed = config.models[actualModel] || ['low','medium','high','xhigh','max','ultra'];
-      for (const option of $('reasoning_effort').options) option.disabled = !!option.value && !allowed.includes(option.value);
+      const paths = config.resources[$('mode').value];
+      $('source-paths').textContent = paths ? Object.entries(paths).map(([key,path]) => key + '：' + path).join('\n\n') : '请先选择赛道。';
+      const selected = config.profiles[$('default_profile').value];
+      $('profile-status').textContent = selected ? `${selected.label} · ${selected.model} · ${selected.configured ? '已配置' : '未配置'} · ${selected.native_search ? '支持原生联网' : '不支持原生联网'}` : '';
+      const ids = ['rewrite_profile','titles_profile','human_profile'].map(id => $(id).value || $('default_profile').value);
+      if (config.profiles[ids[0]] && !config.profiles[ids[0]].native_search) ids[0] = config.routing.search_fallback_profile;
+      const supported = ids.map(id => new Set(config.profiles[id]?.supported_efforts || []));
+      for (const option of $('reasoning_effort').options) option.disabled = !!option.value && supported.some(values => !values.has(option.value));
       if ($('reasoning_effort').selectedOptions[0]?.disabled) {
         $('reasoning_effort').value = '';
         sessionStorage.setItem('wechat_reasoning_effort', '');
       }
-      const paths = config.resources[$('mode').value];
-      $('source-paths').textContent = paths ? Object.entries(paths).map(([key,path]) => key + '：' + path).join('\n\n') : '请先选择赛道。';
     }
 
     async function refreshJobs() {
@@ -231,56 +219,14 @@
       $('copy-body').disabled = !data.final_body;
       $('copy-final').disabled = !data.final_body;
       let paths = data.final_path ? '电脑母版：' + data.final_path : '任务文件：' + data.directory;
+      if (data.stage_runs && Object.keys(data.stage_runs).length) paths += '\n实际模型：' + Object.entries(data.stage_runs).map(([stage,run])=>`${stage}=${run.profile}/${run.model}`).join('；');
       $('path').textContent = paths;
       $('console').textContent = data.console || '';
       for (const stage of ['rewrite','titles','human']) $('report-' + stage).textContent = data.reports?.[stage] || '此步骤尚未完成。';
       $('provenance').textContent = JSON.stringify(data.sources, null, 2);
       if (data.elapsed_seconds) $('job-status').textContent += '\n本次尝试已用 ' + data.elapsed_seconds + ' 秒；最后事件：' + (data.last_event_at || '等待模型响应');
       if (data.progress_note) $('job-status').textContent += '\n'+data.progress_note;
-      renderImages(data);
     }
-
-    function imageSelection(id) {
-      try { return new Set(JSON.parse(localStorage.getItem('wechat_images_'+id) || '[]')); }
-      catch { return new Set(); }
-    }
-    function safeLink(url) { try { const u = new URL(url); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; } }
-    function renderImages(data) {
-      const images = data.images || {}, id = data.id, selected = imageSelection(id);
-      const busy = ['queued','searching','downloading'].includes(images.status);
-      const available = new Set((images.candidates || []).map(item=>item.id));
-      for (const key of selected) if (!available.has(key)) selected.delete(key);
-      localStorage.setItem('wechat_images_'+id,JSON.stringify([...selected]));
-      $('image-status').textContent = (images.status_label || '正文完成后自动搜图') + ' · 本次合格候选 ' + (images.candidates || []).filter(item=>!item.retained).length + ' 张' +
-        (images.elapsed_seconds ? ' · 已用 '+images.elapsed_seconds+'秒' : '') + (images.error ? '\n'+images.error : '') +
-        (images.provider_errors?.length ? '\n来源连接问题：\n'+images.provider_errors.join('\n') : '');
-      $('search-images').disabled = data.status !== 'completed' || busy;
-      $('download-images').disabled = busy || !selected.size;
-      $('image-report').textContent = images.report || '';
-      if (images.selected_title && images.selected_title !== data.final_title) $('image-status').textContent += '\n标题已更换，现有图片仍基于同一正文；需要时可重新搜图。';
-      $('image-cards').replaceChildren();
-      for (const item of images.candidates || []) {
-        const card = document.createElement('article'); card.className = 'image-card';
-        const download = images.downloads?.[item.id];
-        const preview = download?.status === 'completed' ? '/api/jobs/'+id+'/images/'+item.id : safeLink(item.thumbnailUrl);
-        if (preview) { const img = document.createElement('img'); img.src = preview; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.alt = item.title; img.onerror = () => { img.replaceWith(document.createTextNode('缩略图加载失败，请打开来源页查看。')); }; card.append(img); }
-        const label = document.createElement('label'), box = document.createElement('input'); box.type='checkbox'; box.checked=selected.has(item.id); box.disabled=busy;
-        box.onchange = () => { box.checked ? selected.add(item.id) : selected.delete(item.id); localStorage.setItem('wechat_images_'+id,JSON.stringify([...selected])); $('download-images').disabled = !selected.size || busy; };
-        label.append(box,document.createTextNode((item.retained ? '上次已下载 · ' : '')+(item.kind === 'product' ? '产品实物图 · ' : '场景示意图 · ')+item.title)); card.append(label);
-        for (const text of [item.author+' · '+item.width+'×'+item.height, item.license+' · '+(item.attributionRequired ? '须署名' : '无需强制署名'),item.usage_terms || '',item.relevance,download?.status === 'completed' ? '已保存：'+download.path : download?.error ? '下载失败：'+download.error : '尚未下载原图']) { const p = document.createElement('p'); p.textContent=text; card.append(p); }
-        for (const [text,url] of [['来源页面',item.sourcePageUrl],['授权条款',item.licenseUrl]]) { const a=document.createElement('a'); a.textContent=text+' '; a.href=safeLink(url); a.target='_blank'; a.rel='noopener noreferrer'; card.append(a); }
-        const copy=document.createElement('button'); copy.type='button'; copy.textContent='复制署名'; copy.onclick=()=>copyText(download?.attributionLine || item.attributionLine); card.append(copy);
-        $('image-cards').append(card);
-      }
-    }
-    async function imageAction(action) {
-      const id=activeId;
-      $('search-images').disabled=true; $('download-images').disabled=true;
-      try { await api('/api/jobs/'+id+'/images/'+action,action === 'download' ? {ids:[...imageSelection(id)]} : {}); if (activeId === id) { clearTimeout(timer); poll(++generation); } }
-      catch (error) { $('image-status').textContent=error.message; if (activeId === id) { clearTimeout(timer); timer=setTimeout(()=>poll(++generation),3000); } }
-    }
-    $('search-images').onclick=()=>imageAction('search');
-    $('download-images').onclick=()=>imageAction('download');
 
     function openJob(id) {
       activeId = id; generation++;
@@ -297,7 +243,7 @@
         const data = await api('/api/jobs/' + id);
         if (token !== generation || id !== activeId) return;
         if (!selectionBusy) render(data);
-        if (['queued','running'].includes(data.status) || ['waiting','queued','searching','downloading'].includes(data.images?.status)) timer = setTimeout(() => poll(token), 3000);
+        if (['queued','running'].includes(data.status)) timer = setTimeout(() => poll(token), 3000);
         else await refreshJobs();
       } catch (error) {
         if (token !== generation) return;
@@ -311,7 +257,10 @@
       $('submit').disabled = true;
       $('status').textContent = '正在提交到 Mac 后台…';
       try {
-        const data = await api('/api/jobs', Object.fromEntries(new FormData($('writer-form'))));
+        const payload = Object.fromEntries(new FormData($('writer-form')));
+        payload.stage_profiles = {rewrite:payload.rewrite_profile, titles:payload.titles_profile, human:payload.human_profile};
+        delete payload.rewrite_profile; delete payload.titles_profile; delete payload.human_profile;
+        const data = await api('/api/jobs', payload);
         $('status').textContent = '已提交：' + data.id + '。现在可关闭网页，或另开页面提交另一篇。';
         openJob(data.id);
       } catch (error) {
@@ -349,12 +298,19 @@
     async function init() {
       try {
         config = await api('/api/options');
-        const savedModel = $('model').value;
-        $('model').replaceChildren(new Option('使用当前默认（' + (config.defaults.model || '由 Codex 决定') + '）', ''));
-        for (const model of Object.keys(config.models)) $('model').add(new Option(model, model));
-        $('model').value = savedModel;
-        $('reasoning_effort').options[0].textContent = '使用当前默认（' + (config.defaults.reasoning_effort || '由 Codex 决定') + '）';
-        $('model').onchange = updateOptions; $('mode').onchange = updateOptions;
+        for (const id of ['default_profile','rewrite_profile','titles_profile','human_profile']) {
+          const select=$(id), saved=select.value;
+          if (id === 'default_profile') select.replaceChildren();
+          else select.replaceChildren(new Option(id === 'rewrite_profile' ? '跟随默认，必要时自动切搜索模型' : '跟随默认',''));
+          for (const profile of Object.values(config.profiles)) {
+            const option=new Option(`${profile.label} · ${profile.model}${profile.configured ? '' : '（未配置）'}`,profile.id);
+            option.disabled=!profile.configured; select.add(option);
+          }
+          select.value=saved && [...select.options].some(o=>o.value===saved&&!o.disabled) ? saved : (id === 'default_profile' ? config.routing.default_profile : '');
+        }
+        $('reasoning_effort').options[0].textContent = '使用模型配置默认值';
+        for (const id of ['default_profile','rewrite_profile','titles_profile','human_profile']) $(id).onchange = updateOptions;
+        $('mode').onchange = updateOptions;
         updateOptions();
         $('submit').disabled = false; $('submit').textContent = '提交，一次跑完';
         await refreshJobs();

@@ -37,9 +37,8 @@ class PipelineTests(unittest.TestCase):
         for job in p.list_jobs():
             if job['status'] in ('queued','running'):
                 self.done(job['id'])
-        import image_workflow as images
         end = time.monotonic() + 15
-        while any(p.busy(p.job_dir(j['id'])) or images.state_of(p.job_dir(j['id']))['status'] in images.BUSY for j in p.list_jobs()) and time.monotonic() < end:
+        while any(p.busy(p.job_dir(j['id'])) for j in p.list_jobs()) and time.monotonic() < end:
             time.sleep(.05)
         self.env.stop()
         self.temp.cleanup()
@@ -109,6 +108,17 @@ class PipelineTests(unittest.TestCase):
         title_schema = p.schema_for('titles',40)['properties']['titles']
         self.assertNotIn('minLength',title_schema['items'])
         self.assertNotIn('maxLength',title_schema['items'])
+
+    def test_profile_routing_and_public_options_are_secret_free(self):
+        options = p.options()
+        self.assertIn('codex', options['profiles'])
+        self.assertNotIn('api_key', json.dumps(options))
+        self.assertTrue(all(item['ok'] for item in p.environment_checks()))
+        with patch.object(p.provider_config, 'resolve_profile', side_effect=lambda profile_id: (p.provider_config.load_config()['profiles'][profile_id], 'fixture')):
+            routed = p.validate_input({**self.payload(), 'model':'', 'default_profile':'deepseek',
+                                       'stage_profiles':{'titles':'deepseek','human':'deepseek'}})
+        self.assertEqual(routed['stage_profiles']['rewrite'], 'codex')
+        self.assertEqual(routed['stage_profiles']['titles'], 'deepseek')
 
     def test_failure_resume_only_unfinished(self):
         marker = self.directory/'fail'

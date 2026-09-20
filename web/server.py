@@ -11,7 +11,6 @@ from urllib.parse import urlsplit
 PIPELINE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PIPELINE_DIR))
 import pipeline
-import image_workflow
 MAX_BODY_BYTES = 1_000_000
 
 
@@ -54,16 +53,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_json(200, {'ok': True, **pipeline.options()})
             elif route == '/api/jobs':
                 self.send_json(200, {'ok': True, 'jobs': pipeline.list_jobs()})
-            elif len(route.split('/')) == 6 and route.split('/')[4] == 'images':
-                file, mime = image_workflow.downloaded_file(route.split('/')[3], route.split('/')[5])
-                body = file.read_bytes()
-                self.send_response(200)
-                self.send_header('Content-Type', mime)
-                self.send_header('X-Content-Type-Options', 'nosniff')
-                self.send_header('Content-Length', str(len(body)))
-                self.send_header('Cache-Control', 'private, max-age=3600')
-                self.end_headers()
-                self.wfile.write(body)
             elif route.startswith('/api/jobs/'):
                 self.send_json(200, {'ok': True, **pipeline.job_result(route.removeprefix('/api/jobs/'))})
             else:
@@ -93,15 +82,6 @@ class AppHandler(BaseHTTPRequestHandler):
                         return
                     state = pipeline.job_result(state['id'])
                 self.send_json(202 if route == '/api/jobs' else 200, {'ok': True, **state})
-            elif len(route.split('/')) == 6 and route.split('/')[4] == 'images':
-                job_id, action = route.split('/')[3], route.split('/')[5]
-                if action == 'search':
-                    state = image_workflow.start_search(job_id)
-                elif action == 'download':
-                    state = image_workflow.start_download(job_id, payload.get('ids'))
-                else:
-                    raise ValueError('图片操作不存在。')
-                self.send_json(202, {'ok':True, 'images':state})
             elif route.startswith('/api/jobs/') and route.endswith('/select'):
                 self.send_json(200, {'ok': True, **pipeline.select_title(route.split('/')[3], payload.get('index'))})
             elif route.startswith('/api/jobs/') and route.endswith('/retry'):
